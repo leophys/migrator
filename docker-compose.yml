@@ -7,10 +7,6 @@ services:
       MARIADB_ROOT_PASSWORD: testpassword
     volumes:
       - dbvol:/var/lib/mysql
-    healthcheck:
-      test: '/usr/bin/mariadb-admin ping -h 127.0.0.1 -u root -p$$MARIADB_ROOT_PASSWORD'
-      timeout: 1s
-      retries: 30
 
   migrator:
     image: leophys/migrator
@@ -29,8 +25,7 @@ services:
       - ./testmigrations:/migrations
       - ./testtemplates:/templates
     depends_on:
-      db:
-        condition: service_healthy
+      - db
 
 volumes:
   dbvol: {}

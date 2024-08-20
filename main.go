@@ -2,20 +2,26 @@ package main
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"errors"
-	"strings"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"text/template"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/mysql"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+)
+
+var (
+	defaultDelay   = 3 * time.Second
+	defaultTimeout = 5 * time.Minute
 )
 
 func main() {
@@ -39,10 +45,17 @@ func main() {
 
 	slog.Debug("Starting migration", "migrationsPath", migrationsPath, "dbUrl", dbUrl)
 
-	m, err := migrate.New(
-		migrationsPath, dbUrl,
-	)
-	if err != nil {
+	var m *migrate.Migrate
+	if err := retryFor(func() error {
+		m, err = migrate.New(
+			migrationsPath, dbUrl,
+		)
+		if err != nil {
+			slog.Warn("Failed to instantiate migrations", "err", err)
+			return err
+		}
+		return nil
+	}, defaultDelay, defaultTimeout); err != nil {
 		slog.Error("Failed to instantiate migrations", "err", err)
 		os.Exit(2)
 	}
@@ -95,7 +108,7 @@ type config struct {
 	dbName string
 
 	migrations string
-	templates string
+	templates  string
 	port       uint16
 	debug      bool
 }
@@ -265,4 +278,27 @@ func renderTemplate(tmpl *template.Template, envs map[string]string, baseDir str
 	}
 
 	return nil
+}
+
+func retryFor(f func() error, delay, timeout time.Duration) error {
+	done := make(chan struct{})
+
+	go func() {
+		for {
+			if err := f(); err == nil {
+				done <- struct{}{}
+				return
+			}
+			time.Sleep(delay)
+		}
+	}()
+
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-time.After(timeout):
+			return fmt.Errorf("the operation execeeded the timeout")
+		}
+	}
 }
